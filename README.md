@@ -1,3 +1,5 @@
+This branch contains all files needed to run the code after downloading.
+
 # LSTM-acceleration-with-singular-value-decomposition
 A project for my linear algebra class, this is an extension of my work in [dncoble/LSTM-State-Estimation-with-Time-Domain-Signal](https://github.com/dncoble/LSTM-State-Estimation-with-Time-Domain-Signal) and dncoble/LSTM-implementation-on-FPGA (not published).
 <p align="center">
