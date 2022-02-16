@@ -61,21 +61,7 @@ y_my_model = my_model.multi_step_forward_pass(X_test[0]) # 31.6 sec
 full_model_timing = time.monotonic() - start_time
 print("timing for full model: " + str(full_model_timing) + " sec")
 
-
-# reduced models. I'll test reducing the rank of cells 2 and 3 from 1 to 15
-
-# a python list that will contain numpy arrays for each reduction
-reduced_y_pred = [None]*19
-reduced_t = [None]*19
-for i in range(1, 20):
-    cell1 = make_My_LSTM_Cell(model.layers[0])
-    cell2 = make_Reduced_LSTM_Cell(model.layers[1], 30-i)
-    cell3 = make_Reduced_LSTM_Cell(model.layers[2], 20-i)
-    reduced_model = My_LSTM_Model([cell1,cell2,cell3],model.layers[3])
-    start_time = time.monotonic()
-    reduced_y_pred[i-1] = reduced_model.multi_step_forward_pass(X_test[0])
-    reduced_t[i-1] = time.monotonic() - start_time
-    print("timing for reduced model: " + str(reduced_t[i-1]) + " sec")
+# REDUCTION AND PLOTTING STILL IN PROGRESS WHILE I EDIT svd_classes.py
 
 #%% analysis & plots
 from sklearn.metrics import mean_squared_error
