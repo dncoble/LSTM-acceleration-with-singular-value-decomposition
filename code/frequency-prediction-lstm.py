@@ -44,8 +44,8 @@ model = keras.models.Sequential([
     keras.layers.Dense(1)
 ])
 
-def last_time_step_mse(y_true, y_pred):
-    return keras.metrics.mean_squared_error(y_true[:, -1], y_pred[:, -1])
+# def last_time_step_mse(y_true, y_pred):
+#     return keras.metrics.mean_squared_error(y_true[:, -1], y_pred[:, -1])
 
 model.compile(loss="mse", optimizer="adam")
 history = model.fit(X_train, y_train, epochs = 20,
@@ -67,6 +67,6 @@ plt.title("LSTM model predicts " + y_type)
 plt.ylabel("true " + y_type)
 plt.xlabel("predicted " + y_type)
 plt.tight_layout()
-plt.savefig("predicting_" + y_type + ".png", dpi=500)
+plt.savefig("./plots/predicting_" + y_type + ".png", dpi=500)
 #%% save model
-model.save(y_type)
+model.save("./model_saves/" + y_type)

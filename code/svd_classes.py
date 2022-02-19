@@ -150,6 +150,32 @@ def make_Reduced_LSTM_Cell(keras_layer, rank):
     return Reduced_LSTM_Cell(units, Wi, Wf, Wc, Wo, Ui, Uf, Uc, Uo, bi, bf, bc, bo)
 
 
+# index will be a tuple (cell, W/U, gate)
+def set_model_matrix_rank(model, index, rank):
+    W, U, b = model.layers[index[0]].get_weights()
+    units = U.shape[0]
+    
+    m = [W,U][index[1]][:,units*index[2]:units*(index[2]+1)] # no transpose
+    [W,U][index[1]][:,units*index[2]:units*(index[2]+1)] = reduce_matrix_rank(m, rank)
+    model.layers[index[0]].set_weights((W,U,b))
+    return model
+    
+
+def get_model_singular_values(model):
+    # a bunch of for loops
+    # assumes a square model
+    layers = len(model.layers) - 1
+    units = model.layers[0].get_weights()[1].shape[0]
+    rtrn = np.zeros((layers, 2, 4, units))
+    for i in range(layers):
+        W, U, b = model.layers[i].get_weights()
+        for j in range(2):
+            m = [W,U][j]
+            for k in range(4):
+                rtrn[i,j,k,:] = np.linalg.svd(m, full_matrices=True,compute_uv=False)
+    return rtrn
+    
+
 # testing out np.linalg.svd
 # if __name__ == '__main__':
     # A = np.array([[1, 3, 5], [2, 2, 2], [5, 8, 9]])

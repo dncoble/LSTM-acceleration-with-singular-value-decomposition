@@ -6,13 +6,13 @@ import matplotlib.pyplot as plt
 import tensorflow.keras as keras
 import sklearn as sk
 """
-My final project for Linear Algebra, to reduce the size of this model with a
-SVD-like method. But before I can do that I need to create my own
-implementation of LSTM cells that I know I can use to evaluate timing fairly.
-From there, the idea is to create a new model w/ units 30 -> 30 -> 20, perform
-an SVD reduction on each matrix multiplication (prob half the rank?), and then
-create another LSTM representation for timing. If all that works I really will
-have done something.
+Put a description of the work here
+todo:
+    replace units (30) with variable n
+    replace amount of stacked cells with variable
+    smarter drop metrics - sigma/weights, something with derivatives?
+    
+    
 running on TensorFlow 2.5.0
 """
 #%% load data
@@ -45,8 +45,11 @@ load_y_test.close()
 load_t_test.close()
 #%% 
 model = keras.models.load_model("./model_saves/pretrained_sequential")
+amplitude_model = keras.models.load_model('./model_saves/frequency')
 #%%
 from svd_classes import make_LSTM_Model, make_My_LSTM_Cell, make_Reduced_LSTM_Cell, My_LSTM_Model
+from svd_classes import set_model_matrix_rank
+from svd_classes import get_model_singular_values
 import time
 # prediction time on the native keras implementation
 X_test_0 = np.expand_dims(X_test[0],axis=0)
@@ -54,14 +57,51 @@ start_time = time.monotonic()
 model.predict(X_test_0)
 print("native timing: " + str(time.monotonic() - start_time) + " sec")
 
+# first index is the cell, second is matrix (W or U), third is gate (i,f,c,o)
+model_ranks = np.full((4,2,4), 30)
+model_singular_values = get_model_singular_values(model)
 
-my_model = make_LSTM_Model(model)
-start_time = time.monotonic()
-y_my_model = my_model.multi_step_forward_pass(X_test[0]) # 31.6 sec
-full_model_timing = time.monotonic() - start_time
-print("timing for full model: " + str(full_model_timing) + " sec")
+sorted_indices = np.squeeze(np.dstack(np.unravel_index(np.argsort(model_singular_values.ravel()), (4,2,4,30))))
 
-# REDUCTION AND PLOTTING STILL IN PROGRESS WHILE I EDIT svd_classes.py
+# remove Ws of first layer
+c = np.logical_and(sorted_indices[:,0] == 0, sorted_indices[:,1] == 0)
+sorted_indices = sorted_indices[c == False]
+#%% RMSE change with each
+iterations =  sorted_indices.shape[0]- 20
+rmse = np.zeros(iterations)
+weights_eliminated = np.zeros(iterations)
+running_weights = 0
+y_test_scaled = pin_scaler.inverse_transform(y_test.squeeze())
+
+from sklearn.metrics import mean_squared_error
+from math import sqrt
+for i in range(iterations):
+    y_pred_scaled = pin_scaler.inverse_transform(model.predict(X_test).squeeze())
+    mse = sum([mean_squared_error(y_t, y_p) for y_t, y_p in zip(y_test_scaled, y_pred_scaled)])/y_test.shape[0]
+    rmse[i] = sqrt(mse)
+    weights_eliminated[i] = running_weights
+    
+    rank = model_ranks[sorted_indices[i][0],sorted_indices[i][1],sorted_indices[i][2]] - 1
+    model_ranks[sorted_indices[i][0],sorted_indices[i][1],sorted_indices[i][2]] = rank
+    model = set_model_matrix_rank(model, sorted_indices[i][:-1], rank)
+    running_weights += 2*30 - 2*rank - 1
+    print(str(i) + " out of " + str(iterations) + " reductions performed.")
+
+ratio_rmse = [i/rmse[0] for i in rmse]
+
+plt.figure(figsize=(6, 4))
+plt.title("RMSE change with reduced rank")
+plt.plot(weights_eliminated, ratio_rmse)
+# plt.plot([0,19],[1,1], 'k--', label = 'unit ratio')
+plt.xlabel("weights eliminated")
+plt.ylabel("RMSE(reduced)/RMSE(full)")
+# plt.xlim((0, 19))
+# plt.ylim((0.8, 2.0))
+# plt.xticks(range(0, 20), [str(i) for i in range(0, 20)])
+# plt.legend(loc=2)
+plt.tight_layout()
+plt.savefig("./plots/RMSE_reducing_singular_values.png", dpi=800)
+
 
 #%% analysis & plots
 from sklearn.metrics import mean_squared_error

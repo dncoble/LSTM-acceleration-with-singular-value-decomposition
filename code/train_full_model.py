@@ -113,12 +113,9 @@ def fit(X_train, y_train, t_train, model, X_test=None, y_test=None, t_test=None,
             save_freq = 1,
             save_best_only = True)
     model.save_weights(filepath)
-    def last_time_step_mse(y_true, y_pred):
-        return keras.metrics.mean_squared_error(y_true[:, -1], y_pred[:, -1])
     optimizer = keras.optimizers.SGD(clipvalue = .5, learning_rate=learning_rate, momentum=.9)
     model.compile(loss = "mean_squared_error",
-                  optimizer = optimizer,
-                  metrics = [last_time_step_mse])
+                  optimizer = optimizer)
     from math import isnan
     from numpy.random import randint
     
@@ -189,6 +186,5 @@ model = seq_model
 plot_evaluate(X_test, y_test, t_test, model, plot_fig=True, savfig=False)
 model = fit(X_train, y_train, t_train, model, X_test=X_test, y_test=y_test,\
             t_test=t_test, total_batches = 1000, evaluate_every=200)
-# model.load_weights("./model_saves/pin_loc800")
 # plot_evaluate(savfig=True, savpath="./plots/" + str(frame)); frame +=1;
 model.save("./model_saves/pretrained_sequential")
