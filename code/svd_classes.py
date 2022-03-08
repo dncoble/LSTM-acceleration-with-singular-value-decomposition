@@ -1,7 +1,10 @@
 import keras.backend as K
 import numpy as np
 from numpy import matmul
-
+"""
+Classes and functions for SVD reduction. Please excuse my object-based obsession,
+it's a side effect of my Java training.
+"""
 # use SVD to produce a matrix with a lower rank
 def reduce_matrix_rank(a, rank):
     u, s, v = np.linalg.svd(a, full_matrices=True, compute_uv=True)
@@ -124,6 +127,59 @@ def make_My_LSTM_Cell(keras_layer):
     bi = np.expand_dims(b[:units],1); bf = np.expand_dims(b[units:units*2],1);
     bc = np.expand_dims(b[units*2:units*3],1); bo = np.expand_dims(b[units*3:],1)
     return My_LSTM_Cell(units, Wi, Wf, Wc, Wo, Ui, Uf, Uc, Uo, bi, bf, bc, bo)
+
+"""
+My_LSTM_Cell and Reduced_LSTM_Cell have terrible performance, which can't be 
+avoided. So instead I'm going to wrap a keras model with the methods that I 
+want to modify it with. 
+Doing it this way should make it easier to experiment with 'heuristics' for 
+finding which sigmas to eliminate. Could even go crazy and make another ML
+model for predicting them.
+"""
+class LSTM_wrapper():
+    
+    def __init__(self, model, scaler):
+        self.scaler = scaler
+        self.model = model
+        self.model_ranks = np.full((4,2,4), 30) # change to model dimensions
+        self.model_singular_values = get_model_singular_values(model)
+    
+    # fill in all the 
+    """
+    heuristic names:
+        'absolute' order by value of singular values
+    """
+    def iterate_reduce_model(self, X, y, threshold=None,reductions=None,evaluate_every=1,\
+                             heuristic='absolute'):
+        from sklearn.metrics import mean_squared_error
+        from math import sqrt
+        
+        check_threshold = (threshold != None)
+        if(heuristic == 'absolute'):
+            sorted_indices = np.squeeze(np.dstack(np.unravel_index(np.argsort(self.model_singular_values.ravel()), (4,2,4,30))))
+        
+        iterations =  sorted_indices.shape[0]- 20
+        rmse = np.zeros(iterations//evaluate_every)
+        weights_eliminated = np.zeros(iterations)
+        running_weights = 0
+        y_test_scaled = self.scaler.inverse_transform(y.squeeze())
+        for i in range(reductions):
+            if(i % evaluate_every == 0):
+                y_pred_scaled = self.scaler.inverse_transform(self.model.predict(X).squeeze())
+                mse = sum([mean_squared_error(y_t, y_p) for y_t, y_p in zip(y_test_scaled, y_pred_scaled)])/y.shape[0]
+                rmse[i//evaluate_every] = sqrt(mse)
+                weights_eliminated[i] = running_weights
+                if(check_threshold and rmse[i//evaluate_every] > threshold):
+                    break;
+            rank = self.model_ranks[sorted_indices[i][0],sorted_indices[i][1],sorted_indices[i][2]] - 1
+            self.model_ranks[sorted_indices[i][0],sorted_indices[i][1],sorted_indices[i][2]] = rank
+            self.model = set_model_matrix_rank(self.model, sorted_indices[i][:-1], rank)
+            running_weights += 2*30 - 2*rank - 1
+            print(str(i) + " out of " + str(iterations) + " reductions performed.")
+    
+    def reduce_n_times(self, heuristic='absolute'):
+        if(heuristic == 'absolute'):
+            sorted_indices = np.squeeze(np.dstack(np.unravel_index(np.argsort(self.model_singular_values.ravel()), (4,2,4,30))))
 
 
 # composed of LSTM layers and a dense top

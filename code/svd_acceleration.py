@@ -158,19 +158,19 @@ plt.tight_layout()
 plt.savefig("./plots/RMSE_plot.png", dpi=800)
 
 # plot of timing
-ratio_timing = [reduced_t_/full_model_timing for reduced_t_ in reduced_t]
-plt.figure(figsize=(6, 4))
-plt.title("Timing change with reduced rank")
-plt.plot(range(1, 20), ratio_timing)
-plt.plot([1,19],[1,1], 'k--', label = 'unit ratio')
-plt.xlabel("n - r")
-plt.ylabel("timing(reduced)/timing(full)")
-plt.xlim((1, 19))
-plt.ylim((0.8, 2.0))
-plt.xticks(range(1, 20), [str(i) for i in range(1, 20)])
-plt.legend(loc=2)
-plt.tight_layout()
-plt.savefig("./plots/timing_plot.png", dpi=800)
+# ratio_timing = [reduced_t_/full_model_timing for reduced_t_ in reduced_t]
+# plt.figure(figsize=(6, 4))
+# plt.title("Timing change with reduced rank")
+# plt.plot(range(1, 20), ratio_timing)
+# plt.plot([1,19],[1,1], 'k--', label = 'unit ratio')
+# plt.xlabel("n - r")
+# plt.ylabel("timing(reduced)/timing(full)")
+# plt.xlim((1, 19))
+# plt.ylim((0.8, 2.0))
+# plt.xticks(range(1, 20), [str(i) for i in range(1, 20)])
+# plt.legend(loc=2)
+# plt.tight_layout()
+# plt.savefig("./plots/timing_plot.png", dpi=800)
 
 # a gif of predictions as n - r increases
 import imageio
