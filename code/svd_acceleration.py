@@ -105,7 +105,7 @@ plt.savefig("./plots/RMSE_reducing_singular_values.png", dpi=800)
 
 #%% analysis & plots
 from sklearn.metrics import mean_squared_error
-y_pred_scaled = pin_scaler.inverse_transform(y_my_model)
+y_pred_scaled = pin_scaler.inverse_transform(model.predict(X_test).squeeze())
 y_test_scaled = pin_scaler.inverse_transform(y_test[0].squeeze())
 
 rmse = mean_squared_error(y_pred_scaled, y_test_scaled, squared=False)
