@@ -49,7 +49,7 @@ def split_train_random(batch_size, train_len):
     y_mini = np.copy(np.array([y_train[index[0],index[1]+train_len][0] for index in indices]))
     return X_mini, y_mini
 print("making model...")
-units = [30, 30, 15, 15]
+units = [30, 30, 30, 30]
 model = keras.Sequential(
     [keras.layers.LSTM(units[0],return_sequences=True,input_shape=[None, 1])] + 
     [keras.layers.LSTM(i, return_sequences = True) for i in units[1:]] +

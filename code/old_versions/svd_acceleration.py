@@ -45,17 +45,17 @@ load_y_test.close()
 load_t_test.close()
 #%% 
 model = keras.models.load_model("./model_saves/pretrained_sequential")
-amplitude_model = keras.models.load_model('./model_saves/frequency')
+# amplitude_model = keras.models.load_model('./model_saves/frequency')
 #%%
 from svd_classes import make_LSTM_Model, make_My_LSTM_Cell, make_Reduced_LSTM_Cell, My_LSTM_Model
 from svd_classes import set_model_matrix_rank
 from svd_classes import get_model_singular_values
 import time
 # prediction time on the native keras implementation
-X_test_0 = np.expand_dims(X_test[0],axis=0)
-start_time = time.monotonic()
-model.predict(X_test_0)
-print("native timing: " + str(time.monotonic() - start_time) + " sec")
+start_time = time.perf_counter()
+model.predict(X_test)
+print("native timing: " + str(time.perf_counter() - start_time) + " sec")
+
 
 # first index is the cell, second is matrix (W or U), third is gate (i,f,c,o)
 model_ranks = np.full((4,2,4), 30)
@@ -106,13 +106,13 @@ plt.savefig("./plots/RMSE_reducing_singular_values.png", dpi=800)
 #%% analysis & plots
 from sklearn.metrics import mean_squared_error
 y_pred_scaled = pin_scaler.inverse_transform(model.predict(X_test).squeeze())
-y_test_scaled = pin_scaler.inverse_transform(y_test[0].squeeze())
+y_test_scaled = pin_scaler.inverse_transform(y_test[0])
 
 rmse = mean_squared_error(y_pred_scaled, y_test_scaled, squared=False)
 
 plt.figure(figsize=(7,3.3))
 plt.title("LSTM prediction of pin location")
-plt.plot(t_test[0], y_pred_scaled, label = "predicted pin location")
+plt.plot(t_test[0], y_pred_scaled[0], label = "predicted pin location")
 plt.plot(t_test[0], y_test_scaled, label = "actual pin location",alpha=.8)
 plt.xlabel("time [s]")
 plt.ylabel("pin location [m]")
