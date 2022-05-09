@@ -6,10 +6,20 @@ from numpy.random import randint
 import matplotlib.pyplot as plt
 import tensorflow.keras as keras
 import sklearn as sk
+
 import tensorflow_model_optimization as tfmot
+from tensorflow_model_optimization.python.core.sparsity.keras import prune
+from tensorflow_model_optimization.python.core.sparsity.keras import pruning_callbacks
+from tensorflow_model_optimization.python.core.sparsity.keras import pruning_schedule
+from tensorflow_model_optimization.python.core.sparsity.keras import pruning_wrapper
+
 """
 SVD acceleration using svd_classes_v2 classes.
 Keras implementation hopefully means Keras-type speeds.
+todo:
+    apply pruning to all layers in aggregate
+    calculate total weights lost
+    
 
 TensorFlow 2.5.0
 TensorFlow Model Optimization 0.6.0 (for compatibility with TF 2.5.0)
@@ -77,13 +87,13 @@ def split_train_random(batch_size, train_len):
 
 prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
 
-# change this to polynomial decay
-pruning_schedule = tfmot.sparsity.keras.ConstantSparsity(0.8, 0)
+
 
 def apply_pruning_to_LSTM(layer):
+    pruning_schedule = tfmot.sparsity.keras.PolynomialDecay(
+        initial_sparsity=0, final_sparsity=.8, begin_step=0, end_step=500)
     if not isinstance(layer, keras.layers.TimeDistributed):
-        print("lstm layer")
-        return tfmot.sparsity.keras.prune_low_magnitude(layer)
+        return tfmot.sparsity.keras.prune_low_magnitude(layer,pruning_schedule)
     return layer
 
 smodel = keras.models.clone_model(smodel, clone_function=apply_pruning_to_LSTM)
@@ -93,9 +103,24 @@ smodel.compile(
     metrics = ['accuracy']
 )
 
-X_mini, y_mini = split_train_random(10000, 100)
-model.fit(X_mini, y_mini, validation_data=(X_test,y_test), epochs=20)
+X_mini, y_mini = split_train_random(3200, 100)
+
+smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=5, callbacks=[pruning_callbacks.UpdatePruningStep()])
+
 #%% analysis & plots
+start_time = time.perf_counter()
+sy = smodel.predict(X_test)
+print("singular model timing: " + str(time.perf_counter() - start_time) + " sec")
+plt.figure(figsize=(7,3.3))
+plt.title("LSTM prediction of pin location")
+plt.plot(t_test[0], sy[0], label = "predicted pin location")
+plt.plot(t_test[0], y_test[0], label = "actual pin location",alpha=.8)
+plt.xlabel("time [s]")
+plt.ylabel("pin location [m]")
+# plt.ylim((0.045, .23))
+plt.legend(loc=1)
+plt.tight_layout()
+
 # from sklearn.metrics import mean_squared_error
 # y_pred_scaled = pin_scaler.inverse_transform(model.predict(X_test).squeeze())
 # y_test_scaled = pin_scaler.inverse_transform(y_test[0].squeeze())
