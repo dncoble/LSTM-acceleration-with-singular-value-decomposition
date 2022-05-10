@@ -107,6 +107,29 @@ X_mini, y_mini = split_train_random(3200, 100)
 
 smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=5, callbacks=[pruning_callbacks.UpdatePruningStep()])
 
+# prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
+
+# pruned_model = keras.models.Sequential()
+# for i in range(4):
+#     pruned_model.add(smodel.layers[i])
+
+# schedule = tfmot.sparsity.keras.PolynomialDecay(
+#     initial_sparsity=0, final_sparsity=.8, begin_step=0, end_step=500)
+# pruned_model = prune_low_magnitude(pruned_model, schedule)
+# pruned_model.add(smodel.layers[4])
+
+# smodel = pruned_model
+
+# smodel.compile(
+#     loss="mse",
+#     optimizer="adam",
+#     metrics = ['accuracy']
+# )
+
+# X_mini, y_mini = split_train_random(3200, 100)
+
+# smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=5, callbacks=[pruning_callbacks.UpdatePruningStep()])
+
 #%% analysis & plots
 start_time = time.perf_counter()
 sy = smodel.predict(X_test)

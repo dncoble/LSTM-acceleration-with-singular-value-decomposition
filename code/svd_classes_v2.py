@@ -144,46 +144,6 @@ class SingularLSTMCell(LSTMCell):
         h = o * self.activation(c)
         return h, [h, c]
 
-"""
-goes into the model and changes the LSTMCell objects to SingularLSTMCell.
-assumes all layers in the model are LSTMs except the last
-DON'T USE THIS FUNCTION, use instead make_LSTM_singular_model
-"""
-def convert_LSTM_to_singular(model):
-    for layer in model.layers[:-1]:
-        # print('count')
-        w, u, b = layer.get_weights()
-        units = u.shape[0]
-        w_split = [w[:,:units],w[:,units:units*2],w[:,units*2:units*3],w[:,units*3:]]
-        u_split = [u[:,:units],u[:,units:units*2],u[:,units*2:units*3],u[:,units*3:]]
-        
-        wu = []
-        for split in [w_split, u_split]:
-            lefts = []
-            sigmas = []
-            rights = []
-            for mat in split:
-                left, sigma, right = np.linalg.svd(mat, full_matrices=False, compute_uv=True)
-                lefts.append(left.T)
-                sigmas.append(sigma)
-                rights.append(right.T)
-            unsplit_left = lefts[0]
-            unsplit_sigma = sigmas[0]
-            unsplit_right = rights[0]
-            for left, sigma, right in zip(lefts[1:], sigmas[1:], rights[1:]):
-                unsplit_left = np.append(unsplit_left, left, axis=1) # maybe wrong axis?
-                unsplit_sigma = np.append(unsplit_sigma, sigma)
-                unsplit_right = np.append(unsplit_right, right,axis=1)
-            wu.append([unsplit_left, unsplit_sigma, unsplit_right])
-        
-        singular_cell = SingularLSTMCell(units, w=wu[0],u=wu[1])
-        singular_cell.kernel = tf.Variable(w)
-        singular_cell.recurrent_kernel = tf.Variable(u)
-        singular_cell.bias = tf.Variable(b)
-        
-        layer.cell = singular_cell
-    return model
-
 class SingularLSTM(keras.layers.LSTM):
     
     def __init__(self, units, cell=None, **kwargs):
@@ -246,8 +206,46 @@ class SingularLSTM(keras.layers.LSTM):
     
     def get_prunable_weights(self):
         return [self.cell.w_sigma, self.cell.u_sigma]
-      
 
+"""
+goes into the model and changes the LSTMCell objects to SingularLSTMCell.
+assumes all layers in the model are LSTMs except the last
+DON'T USE THIS FUNCTION, use instead make_LSTM_singular_model
+"""
+def convert_LSTM_to_singular(model):
+    for layer in model.layers[:-1]:
+        # print('count')
+        w, u, b = layer.get_weights()
+        units = u.shape[0]
+        w_split = [w[:,:units],w[:,units:units*2],w[:,units*2:units*3],w[:,units*3:]]
+        u_split = [u[:,:units],u[:,units:units*2],u[:,units*2:units*3],u[:,units*3:]]
+        
+        wu = []
+        for split in [w_split, u_split]:
+            lefts = []
+            sigmas = []
+            rights = []
+            for mat in split:
+                left, sigma, right = np.linalg.svd(mat, full_matrices=False, compute_uv=True)
+                lefts.append(left.T)
+                sigmas.append(sigma)
+                rights.append(right.T)
+            unsplit_left = lefts[0]
+            unsplit_sigma = sigmas[0]
+            unsplit_right = rights[0]
+            for left, sigma, right in zip(lefts[1:], sigmas[1:], rights[1:]):
+                unsplit_left = np.append(unsplit_left, left, axis=1) # maybe wrong axis?
+                unsplit_sigma = np.append(unsplit_sigma, sigma)
+                unsplit_right = np.append(unsplit_right, right,axis=1)
+            wu.append([unsplit_left, unsplit_sigma, unsplit_right])
+        
+        singular_cell = SingularLSTMCell(units, w=wu[0],u=wu[1])
+        singular_cell.kernel = tf.Variable(w)
+        singular_cell.recurrent_kernel = tf.Variable(u)
+        singular_cell.bias = tf.Variable(b)
+        
+        layer.cell = singular_cell
+    return model
 
 def make_LSTM_singular_model(model):
     smodel = keras.models.Sequential()
