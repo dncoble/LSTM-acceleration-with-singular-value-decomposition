@@ -207,6 +207,17 @@ class SingularLSTM(keras.layers.LSTM):
     def get_prunable_weights(self):
         return [self.cell.w_sigma, self.cell.u_sigma]
 
+class PrunableTimeDistributed(keras.layers.TimeDistributed):
+    
+    def __init__(self, layer, **kwargs):
+        super(PrunableTimeDistributed, self).__init__(layer, **kwargs)
+        self.layer = layer
+    
+    def get_prunable_weights(self):
+        return self.layer.layer.weights
+    
+    
+
 """
 goes into the model and changes the LSTMCell objects to SingularLSTMCell.
 assumes all layers in the model are LSTMs except the last

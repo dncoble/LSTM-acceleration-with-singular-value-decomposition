@@ -53,7 +53,7 @@ load_X_test.close()
 load_y_test.close()
 load_t_test.close()
 #%%
-from svd_classes_v2 import make_LSTM_singular_model
+from svd_classes_v2 import make_LSTM_singular_model, PrunableTimeDistributed
 model = keras.models.load_model("./model_saves/pretrained_sequential")
 print("making singular value model...")
 smodel = make_LSTM_singular_model(model)
@@ -88,7 +88,6 @@ def split_train_random(batch_size, train_len):
 prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
 
 
-
 def apply_pruning_to_LSTM(layer):
     pruning_schedule = tfmot.sparsity.keras.PolynomialDecay(
         initial_sparsity=0, final_sparsity=.8, begin_step=0, end_step=500)
@@ -107,28 +106,28 @@ X_mini, y_mini = split_train_random(3200, 100)
 
 smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=5, callbacks=[pruning_callbacks.UpdatePruningStep()])
 
-# prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
+prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
 
-# pruned_model = keras.models.Sequential()
-# for i in range(4):
-#     pruned_model.add(smodel.layers[i])
+pruned_model = keras.models.Sequential()
+for i in range(4):
+    pruned_model.add(smodel.layers[i])
+pruned_model.add(PrunableTimeDistributed(smodel.layers[-1].layer))
 
-# schedule = tfmot.sparsity.keras.PolynomialDecay(
-#     initial_sparsity=0, final_sparsity=.8, begin_step=0, end_step=500)
-# pruned_model = prune_low_magnitude(pruned_model, schedule)
-# pruned_model.add(smodel.layers[4])
+schedule = tfmot.sparsity.keras.PolynomialDecay(
+    initial_sparsity=0, final_sparsity=.8, begin_step=0, end_step=500)
+pruned_model = prune_low_magnitude(pruned_model, schedule)
 
-# smodel = pruned_model
+smodel = pruned_model
 
-# smodel.compile(
-#     loss="mse",
-#     optimizer="adam",
-#     metrics = ['accuracy']
-# )
+smodel.compile(
+    loss="mse",
+    optimizer="adam",
+    metrics = ['accuracy']
+)
 
-# X_mini, y_mini = split_train_random(3200, 100)
+X_mini, y_mini = split_train_random(3200, 100)
 
-# smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=5, callbacks=[pruning_callbacks.UpdatePruningStep()])
+smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=5, callbacks=[pruning_callbacks.UpdatePruningStep()])
 
 #%% analysis & plots
 start_time = time.perf_counter()
