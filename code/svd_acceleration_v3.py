@@ -14,12 +14,7 @@ from tensorflow_model_optimization.python.core.sparsity.keras import pruning_sch
 from tensorflow_model_optimization.python.core.sparsity.keras import pruning_wrapper
 
 """
-SVD acceleration using svd_classes_v2 classes.
-Keras implementation hopefully means Keras-type speeds.
-todo:
-    apply pruning to all layers in aggregate
-    calculate total weights lost
-    
+SVD acceleration using svd_classes_v3 classes.
 
 TensorFlow 2.5.0
 TensorFlow Model Optimization 0.6.0 (for compatibility with TF 2.5.0)
@@ -53,7 +48,7 @@ load_X_test.close()
 load_y_test.close()
 load_t_test.close()
 #%%
-from svd_classes_v2 import make_LSTM_singular_model, PrunableTimeDistributed
+from svd_classes_v3 import make_LSTM_singular_model, PrunableTimeDistributed, make_LSTM_reduced_model
 model = keras.models.load_model("./model_saves/pretrained_sequential")
 print("making singular value model...")
 smodel = make_LSTM_singular_model(model)
@@ -84,29 +79,6 @@ def split_train_random(batch_size, train_len):
     X_mini = np.copy(np.array([X_train[index[0],index[1]:index[1]+train_len] for index in indices]))
     y_mini = np.copy(np.array([y_train[index[0],index[1]+train_len][0] for index in indices]))
     return X_mini, y_mini
-#%% pruning
-# prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
-
-# def apply_pruning_to_LSTM(layer):
-#     pruning_schedule = tfmot.sparsity.keras.ConstantSparsity(
-#         target_sparsity=.7, begin_step=0)
-#     pruning_schedule = tfmot.sparsity.keras.PolynomialDecay(
-#         initial_sparsity=0, final_sparsity=.8, begin_step=0, end_step=20000)
-#     if not isinstance(layer, keras.layers.TimeDistributed):
-#         return tfmot.sparsity.keras.prune_low_magnitude(layer,pruning_schedule)
-#     return layer
-
-# smodel = keras.models.clone_model(smodel, clone_function=apply_pruning_to_LSTM)
-# smodel.compile(
-#     loss="mse",
-#     optimizer="adam",
-#     metrics = ['accuracy']
-# )
-
-# X_mini, y_mini = split_train_random(32000, 100)
-
-# smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=20, callbacks=[pruning_callbacks.UpdatePruningStep()])
-
 #%% regularization
 # pruning was a bad idea
 smodel = make_LSTM_singular_model(model, regularizer=True)
@@ -116,22 +88,68 @@ smodel.compile(
     loss="mse",
     optimizer="adam"
 )
-smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=10)
-#%% analysis & plots
-s = []
-for layer in smodel.layers[:-1]:
-    s.append(layer.cell.kernel.numpy())
-    s.append(layer.cell.recurrent_kernel.numpy())
+smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=20)
+#%% created reduced model
+
+rmodel = make_LSTM_reduced_model(smodel)
 
 start_time = time.perf_counter()
-sy = smodel.predict(X_test)
+ry = rmodel.predict(X_test)
 print("singular model timing: " + str(time.perf_counter() - start_time) + " sec")
 plt.figure(figsize=(7,3.3))
 plt.title("LSTM prediction of pin location")
-plt.plot(t_test[0], sy[0], label = "predicted pin location")
+plt.plot(t_test[0], ry[0], label = "predicted pin location")
 plt.plot(t_test[0], y_test[0], label = "actual pin location",alpha=.8)
 plt.xlabel("time [s]")
 plt.ylabel("pin location [m]")
 # plt.ylim((0.045, .23))
 plt.legend(loc=1)
 plt.tight_layout()
+
+#%% analysis
+from sklearn.metrics import mean_squared_error
+from math import sqrt
+
+# count weights in rmodel
+reduced_weights = 0
+for weight_matrix in rmodel.get_weights():
+    reduced_weights += weight_matrix.size
+full_weights = 0
+for weight_matrix in model.get_weights():
+    full_weights += weight_matrix.size
+
+print("%d weights in full matrix"%full_weights)
+print("%d weights in reduced matrix"%reduced_weights)
+print("%f% reduction in weights"%(100 - reduced_weights/full_weights*100))
+
+ry_scaled = pin_scaler.inverse_transform(ry.squeeze())
+my_scaled = pin_scaler.inverse_transform(fy.squeeze())
+y_test_scaled = pin_scaler.inverse_transform(y_test.squeeze())
+
+rmse = sum([mean_squared_error(y_t, y_p) for y_t, y_p in zip(y_test_scaled, ry_scaled)])/y_test.shape[0]
+rrmse = sqrt(sum([mean_squared_error(y_t, y_p, squared=False)**2 for y_t, y_p in zip(y_test_scaled, ry_scaled)])/y_test.shape[0])
+mmse = sum([mean_squared_error(y_t, y_p) for y_t, y_p in zip(y_test_scaled, my_scaled)])/y_test.shape[0]
+mrmse = sqrt(sum([mean_squared_error(y_t, y_p, squared=False)**2 for y_t, y_p in zip(y_test_scaled, my_scaled)])/y_test.shape[0])
+
+print("%f m RMSE of reduced model"%(rrmse))
+print("%f m RMSE of full model"%(mrmse))
+print("%f percent increase in RMSE"%(rrmse/mrmse*100-100))
+
+
+# s = []
+# for layer in smodel.layers[:-1]:
+#     s.append(layer.cell.kernel.numpy())
+#     s.append(layer.cell.recurrent_kernel.numpy())
+
+# start_time = time.perf_counter()
+# sy = smodel.predict(X_test)
+# print("singular model timing: " + str(time.perf_counter() - start_time) + " sec")
+# plt.figure(figsize=(7,3.3))
+# plt.title("LSTM prediction of pin location")
+# plt.plot(t_test[0], sy[0], label = "predicted pin location")
+# plt.plot(t_test[0], y_test[0], label = "actual pin location",alpha=.8)
+# plt.xlabel("time [s]")
+# plt.ylabel("pin location [m]")
+# # plt.ylim((0.045, .23))
+# plt.legend(loc=1)
+# plt.tight_layout()

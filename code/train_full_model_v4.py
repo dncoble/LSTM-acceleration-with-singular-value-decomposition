@@ -3,7 +3,6 @@ import pickle
 import tensorflow.keras as keras
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-# from math import isnan
 import numpy as np
 from numpy.random import randint
 import math
@@ -100,15 +99,16 @@ output_periods = [1000, 750, 500, 400, 300, 200, 100] # in us
 unit_structures = (
     [40],[35],[20],[25,25],[20,20],[10,10],[18,18,18],[15,15,15],[8,8,8]
 )
-for output_period in output_periods:
-    sample_period = output_period*10^-6/16
+for output_period in output_periods[4:]:
+    sample_period = output_period*10**-6/16
     (X, X_train, X_test), (y, y_train, y_test), \
         (t, t_test, t_train), pin_scaler, acc_scaler = preprocess(sample_period)
     for units in unit_structures:
         print("Now training model %d us output, %d cells, %d units"
               %(output_period, len(units), units[0]))
         
-        X_mini, y_mini = split_train_random(X_train, y_train, 10000, 200)
+        # .1 sec training every time
+        X_mini, y_mini = split_train_random(X_train, y_train, 10000, int(.1/(output_period*10**-6)))
 
         model = keras.Sequential(
             [keras.layers.LSTM(units[0],return_sequences=True,input_shape=[None, 16])] + 
@@ -123,21 +123,33 @@ for output_period in output_periods:
         
         model.fit(X_mini, y_mini, epochs=20)
         pred = pin_scaler.inverse_transform(model.predict(X)[0]).T
-        dict_results[output_period, units] = pred
+        dict_results[output_period, len(units), units[0]] = pred
         string_name = "%dus%dcells%dunits"%(output_period, len(units), units[0])
-        np.save("./prediction results/" + string_name)
+        np.save("./prediction results/" + string_name, pred)
         model.save("./model_saves/" + string_name)
+
+#%% load prediction results
+dict_results = {}
+for output_period in output_periods[:4]:
+    for units in unit_structures:
+        string_name = "%dus%dcells%dunits"%(output_period, len(units), units[0])
+        pred = np.load("./prediction results/" + string_name+".npy")
+        dict_results[output_period, len(units), units[0]] = pred
 
 #%% SNR table
 
 #snr calculated across the entire dataset
-snr_table = np.zeros((len(output_period), len(unit_structures)))
-for i in range(len(output_period)):
-    sample_period = output_period*10^-6/16
+snr_table = np.zeros((len(output_periods), len(unit_structures)))
+for i in range(4):
+# for i in range(len(output_period)):
+    sample_period = output_periods[i]*(10**-6)/16
     (X, X_train, X_test), (y, y_train, y_test), \
         (t, t_test, t_train), pin_scaler, acc_scaler = preprocess(sample_period)
     for j in range(len(unit_structures)):
-        pred = dict_results[output_periods[i], unit_structures[j]].T
+        pred = dict_results[output_periods[i], len(unit_structures[j]),unit_structures[j][0]].T
         true = pin_scaler.inverse_transform(np.expand_dims(y,-1))
         snr = signaltonoise(true, pred)
         snr_table[i,j] = snr
+
+print(snr_table)
+np.savetxt("./prediction results/SNR table.csv", snr_table, delimiter=',')

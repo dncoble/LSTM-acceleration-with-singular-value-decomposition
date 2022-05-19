@@ -2,6 +2,7 @@ import tensorflow as tf
 import tensorflow.keras as keras
 from tensorflow.keras.layers import LSTMCell
 import tensorflow.keras.backend as backend
+# from keras.layers.rnn import rnn_utils
 # from keras.layers.rnn import gru_lstm_utils
 import numpy as np
 from numpy import matmul
@@ -20,21 +21,75 @@ TensorFlow 2.5.0
 """
 class SingularLSTMCell(LSTMCell):
     
-    def __init__(self, units, w=None,u=None, b=None, **kwargs):
+    def __init__(self, units, w=None,u=None, b=None, 
+                 kernel_regularizer=None, recurrent_regularizer=None, **kwargs):
         super(SingularLSTMCell, self).__init__(units, **kwargs)
-        self.w_left = tf.Variable(w[0], trainable=False, dtype='float32')
-        self.w_sigma = tf.Variable(w[1], trainable=True, dtype='float32')
-        self.w_right = tf.Variable(w[2], trainable=False, dtype='float32')
-        self.u_left = tf.Variable(u[0], trainable=False, dtype='float32')
-        self.u_sigma = tf.Variable(u[1], trainable=True, dtype='float32')
-        self.u_right = tf.Variable(u[2], trainable=False, dtype='float32')
-        self.b = tf.Variable(b, trainable=False, dtype='float32')
-        # self.h = tf.Variable(tf.zeros((kwargs.units), 'float32'),trainable=False)
-        # self.c = tf.Variable(tf.zeros((kwargs.units), 'float32'),trainable=False)
+        self.w = w; self.u = u; self.b = b
+        self.kernel_regularizer=kernel_regularizer
+        self.recurrent_regularizer=recurrent_regularizer
+    
+    
+    def build(self, input_shape):
+        # default_caching_device = rnn_utils.caching_device(self)
+        input_dim = input_shape[-1]
+        self.kernel = self.add_weight(
+            shape=(1,input_dim*4),
+            name='kernel',
+            initializer=self.kernel_initializer,
+            regularizer=self.kernel_regularizer,
+            constraint=self.kernel_constraint
+            # caching_device=default_caching_device
+        )
+        self.recurrent_kernel = self.add_weight(
+            shape=(1,self.units * 4),
+            name='recurrent_kernel',
+            initializer=self.recurrent_initializer,
+            regularizer=self.recurrent_regularizer,
+            constraint=self.recurrent_constraint
+            # caching_device=default_caching_device
+        )
+        self.w_left = self.add_weight(
+            shape=(input_dim, input_dim*4),
+            name = "w_left",
+            trainable=False
+        )
+        self.w_right = self.add_weight(
+            shape=(input_dim, self.units*4),
+            name = "w_right",
+            trainable=False
+        )
+        self.u_left = self.add_weight(
+            shape=(self.units, self.units*4),
+            name = "u_left",
+            trainable=False
+        )
+        self.u_right = self.add_weight(
+            shape=(self.units, self.units*4),
+            name = "u_right",
+            trainable=False
+        )
+        self.bias = self.add_weight(
+            shape=(self.units*4,),
+            name="bias",
+            trainable=False
+        )
+        
+        weights = (self.w[1], self.u[1], self.w[0], self.w[2], self.u[0], self.u[2],self.b)
+        self.set_weights(weights)
+        
+        
+        # self.w_left = tf.Variable(w[0], trainable=False, dtype='float32')
+        # self.w_right = tf.Variable(w[2], trainable=False, dtype='float32')
+        # self.u_left = tf.Variable(u[0], trainable=False, dtype='float32')
+        # self.u_right = tf.Variable(u[2], trainable=False, dtype='float32')
+        # self.b = tf.Variable(b, trainable=False, dtype='float32')
+        
+        # self.w_sigma = w[1].T
+        # self.u_sigma = u[1].T
+        
     
     """ modified from keras source code """
     def call(self, inputs, states, training=None):
-        # tf.print("correct call function")
         h_tm1 = states[0]  # previous memory state
         c_tm1 = states[1]  # previous carry state
     
@@ -56,7 +111,7 @@ class SingularLSTMCell(LSTMCell):
         wr_i, wr_f, wr_c, wr_o = tf.split(
             self.w_right, num_or_size_splits=4, axis=1)
         ws_i, ws_f, ws_c, ws_o = tf.split(
-            self.w_sigma, num_or_size_splits=4)
+            self.kernel, num_or_size_splits=4, axis=1)
         wl_i, wl_f, wl_c, wl_o = tf.split(
             self.w_left, num_or_size_splits=4, axis=1)
         
@@ -79,7 +134,7 @@ class SingularLSTMCell(LSTMCell):
         
         if self.use_bias:
             b_i, b_f, b_c, b_o = tf.split(
-                self.b, num_or_size_splits=4, axis=0)
+                self.bias, num_or_size_splits=4, axis=0)
             x_i = backend.bias_add(x_i, b_i)
             x_f = backend.bias_add(x_f, b_f)
             x_c = backend.bias_add(x_c, b_c)
@@ -99,7 +154,7 @@ class SingularLSTMCell(LSTMCell):
         ur_i, ur_f, ur_c, ur_o = tf.split(
             self.u_right, num_or_size_splits=4, axis=1)
         us_i, us_f, us_c, us_o = tf.split(
-            self.u_sigma, num_or_size_splits=4)
+            self.recurrent_kernel, num_or_size_splits=4, axis=1)
         ul_i, ul_f, ul_c, ul_o = tf.split(
             self.u_left, num_or_size_splits=4, axis=1)
         
@@ -148,7 +203,10 @@ class SingularLSTM(keras.layers.LSTM):
     
     def __init__(self, units, cell=None, **kwargs):
         super(SingularLSTM, self).__init__(units, **kwargs)
+        # self.kernel_regularizer = kwargs['kernel_regularizer']
+        # self.recurrent_regularizer = kwargs['recurrent_regularizer']
         self.cell = cell
+        # self.kernel = [cell.w_sigma, cell.u_sigma]
     
     """ copied from the non-gpu portion of keras.layers.LSTM call() function"""
     def call(self, inputs, mask=None, training=None, initial_state=None):
@@ -215,8 +273,22 @@ class PrunableTimeDistributed(keras.layers.TimeDistributed):
     
     def get_prunable_weights(self):
         return self.layer.layer.weights
+
+"""
+The Hoyer regularizer is the ratio of the L1 and L2 norms. It has the effect
+of sparsifying the input tensor but does not reduce the tensor's energy.
+"""
+class HoyerRegularizer:
+    def __init__(self, hoyer=0.):
+        hoyer = 0 if hoyer is None else hoyer
+        self.hoyer = backend.cast_to_floatx(hoyer)
+        
+    def __call__(self, x):
+        regularization = self.hoyer* tf.reduce_sum(tf.abs(x))/tf.reduce_sum(tf.square(x))
+        return regularization
     
-    
+    def get_config(self):
+        return {'hoyer': self.hoyer}
 
 """
 goes into the model and changes the LSTMCell objects to SingularLSTMCell.
@@ -245,7 +317,7 @@ def convert_LSTM_to_singular(model):
             unsplit_sigma = sigmas[0]
             unsplit_right = rights[0]
             for left, sigma, right in zip(lefts[1:], sigmas[1:], rights[1:]):
-                unsplit_left = np.append(unsplit_left, left, axis=1) # maybe wrong axis?
+                unsplit_left = np.append(unsplit_left, left, axis=1)
                 unsplit_sigma = np.append(unsplit_sigma, sigma)
                 unsplit_right = np.append(unsplit_right, right,axis=1)
             wu.append([unsplit_left, unsplit_sigma, unsplit_right])
@@ -258,7 +330,10 @@ def convert_LSTM_to_singular(model):
         layer.cell = singular_cell
     return model
 
-def make_LSTM_singular_model(model):
+"""
+Returns a singular model from the input model
+"""
+def make_LSTM_singular_model(model, regularizer=False):
     smodel = keras.models.Sequential()
     smodel.add(keras.layers.InputLayer(input_shape=[None, 1]))
     for layer in model.layers[:-1]:
@@ -281,22 +356,31 @@ def make_LSTM_singular_model(model):
             for mat in split:
                 left, sigma, right = np.linalg.svd(mat, full_matrices=False, compute_uv=True)
                 lefts.append(left)
-                sigmas.append(sigma)
+                sigmas.append(np.expand_dims(sigma, axis=0))
                 rights.append(right)
             unsplit_left = lefts[0]
             unsplit_sigma = sigmas[0]
             unsplit_right = rights[0]
             for left, sigma, right in zip(lefts[1:], sigmas[1:], rights[1:]):
                 unsplit_left = np.append(unsplit_left, left, axis=1) # maybe wrong axis?
-                unsplit_sigma = np.append(unsplit_sigma, sigma)
+                unsplit_sigma = np.append(unsplit_sigma, sigma, axis=1)
                 unsplit_right = np.append(unsplit_right, right,axis=1)
             wu.append([unsplit_left, unsplit_sigma, unsplit_right])
         
         # b = np.expand_dims(b, axis=-1).T
         # wu[0] = np.expand_dims(wu[0], 0)
         # wu[1] = np.expand_dims(wu[1], 0)
+        if(regularizer):
+            # kernel_regularizer = keras.regularizers.L1(.0002)
+            # recurrent_regularizer = keras.regularizers.L1(.0002)
+            kernel_regularizer = HoyerRegularizer(.03)
+            recurrent_regularizer = HoyerRegularizer(.03)
+        else:
+            kernel_regularizer = None
+            recurrent_regularizer = None
+        cell = SingularLSTMCell(units, w=wu[0],u=wu[1],b=b, 
+                kernel_regularizer=kernel_regularizer, recurrent_regularizer=recurrent_regularizer)
         
-        cell = SingularLSTMCell(units, w=wu[0],u=wu[1],b=b)
         lstm = SingularLSTM(units, cell=cell, return_sequences=True)
         smodel.add(lstm)
     
