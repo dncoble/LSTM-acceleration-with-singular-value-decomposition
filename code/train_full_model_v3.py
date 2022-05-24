@@ -11,14 +11,15 @@ import scipy
 from scipy import signal
 from sklearn.metrics import mean_squared_error
 """
-Goals of this script:
-    1. Input training data will be vector of last few acceleration datapoints.
-This requires modifying the preprocess code, but I'll keep that in this file
-    2. Separate different parts of the dataset and use those for validation
-    3. Create models under a 300 us constraint. 
+The new sample LSTM will be trained on data sampled at 500 us. Inputs will
+be 16-element vectors sampled at 500/16 us. We'll use a 40-40-40-40 unit 
+LSTM and training elements are .1s = 200 samples long. The model is trained
+on the square and sinusuoid profiles and the impulses is left for validation.
+
+This training scheme worked well for my LSTM matrix training.
 """
 #%% preprocess
-def preprocess():
+def preprocess(sampling_period):
     import json
     import pickle
     import numpy as np
@@ -39,7 +40,7 @@ def preprocess():
         if(isnan(pin[i])):
             pin[i] = pin[i-1]
     
-    resample_period = (500/16)*10**-6 # maybe change to 300 us
+    resample_period = sampling_period
     pin = pin[pin_t > 1.5]
     pin_t = pin_t[pin_t > 1.5] - 1.5
     acc = acc[acc_t > 1.5]
@@ -66,20 +67,15 @@ def preprocess():
     
     X = np.expand_dims(X, 0)
     
-    X1 = X[:,t<16]
-    y1 = y[t<16]
-    t1 = t[t<16]
+    X_train = X[:,t<30.7]
+    y_train = y[t<30.7]
+    t_train = t[t<30.7]
     
-    X2 = X[:,np.logical_and(t>=16,t<30.7)]
-    y2 = y[np.logical_and(t>=16, t<30.7)]
-    t2 = t[np.logical_and(t>=16, t<30.7)]
+    X_test = X[:,t>30.7]
+    y_test = y[t>30.7]
+    t_test = t[t>30.7]
     
-    X3 = X[:,t>30.7]
-    y3 = y[t>30.7]
-    t3 = t[t>30.7]
-    
-    
-    return (X, X1, X2, X3), (y, y1, y2, y3), (t, t1, t2, t3), pin_scaler, acc_scaler
+    return (X, X_train, X_test), (y, y_train, y_test), (t, t_test, t_train), pin_scaler, acc_scaler
 
 def split_train_random(X_train, y_train, batch_size, train_len):
     run_size = X_train.shape[1]
@@ -89,86 +85,46 @@ def split_train_random(X_train, y_train, batch_size, train_len):
     return X_mini, y_mini
 
 # use the formula SNR= (A_signal/A_noise)_rms^2. returned in dB
-def signaltonoise(signal, noisy_signal):
+def signaltonoise(signal, noisy_signal, dB=True):
     noise = signal - noisy_signal
     a_sig = math.sqrt(np.mean(np.square(signal)))
     a_noise = math.sqrt(np.mean(np.square(noise)))
     snr = (a_sig/a_noise)**2
+    if(not dB):
+        return snr
     return 10*math.log(snr, 10)
-#%% load data
-X, y, t, pin_scaler, acc_scaler = preprocess()
+#%% train model
+(X, X_train, X_test), (y, y_train, y_test), \
+    (t, t_test, t_train), pin_scaler, acc_scaler = preprocess(500/16)
 
-#touple of (X, y, t train, X, y, t validate)
-training_regiments = (
-    (np.append(X[2], X[3], axis=1), np.append(y[2],y[3]), np.append(t[2], t[3]), X[1], y[1], t[1]),
-    (np.append(X[1], X[3], axis=1), np.append(y[1],y[3]), np.append(t[1], t[3]), X[2], y[2], t[2]),
-    (np.append(X[1], X[2], axis=1), np.append(y[1],y[2]), np.append(t[1], t[2]), X[3], y[3], t[3])
+units_structure = [40, 40, 40, 40];
+
+model = keras.Sequential(
+    [keras.layers.LSTM(units_structure[0],return_sequences=True,input_shape=[None, 16])] + 
+    [keras.layers.LSTM(i, return_sequences = True) for i in units_structure[1:]] +
+    [keras.layers.TimeDistributed(keras.layers.Dense(1))]
+)
+model.compile(loss="mse",
+    optimizer="adam",
+    metrics = ['accuracy']
 )
 
-unit_structures = (
-    [40],
-    [23,23],
-    [18,18,18]
-)
+X_mini, y_mini = split_train_random(X_train, y_train, 20000, 200)
+
+model.fit(X_mini, y_mini, epochs=30)
+
+model.save("./model_saves/pretrained_sequential")
+
+pred = pin_scaler.inverse_transform(model.predict(X)[0]).T
+#%% analysis
+
+true = pin_scaler.inverse_transform(np.expand_dims(y,-1))
 
 
-# fill this with nparrays of prediction results. keys (val profile, profile, model size)
-dict_results = {}
-
-for unit_pattern in range(3):
-    for training_pattern in range(3):
-        print("training model #" +str(unit_pattern*3+training_pattern))
-        units = unit_structures[unit_pattern]
-        training_regiment = training_regiments[training_pattern]
-        X_train = training_regiment[0]
-        y_train = training_regiment[1]
-        X_test = training_regiment[3]
-        y_test = training_regiment[4]
-        
-        X_mini, y_mini = split_train_random(X_train, y_train, 10000, 200)
-
-        model = keras.Sequential(
-            [keras.layers.LSTM(units[0],return_sequences=True,input_shape=[None, 16])] + 
-            [keras.layers.LSTM(i, return_sequences = True) for i in units[1:]] +
-            [keras.layers.TimeDistributed(keras.layers.Dense(1))]
-        )
-        model.compile(loss="mse",
-            optimizer="adam",
-            metrics = ['accuracy']
-        )
-        y_test = np.expand_dims(y_test, -1)
-        
-        model.fit(X_mini, y_mini, epochs=20)
-        
-        for i in range(1,4):
-            pred = pin_scaler.inverse_transform(model.predict(X[i])[0]).T
-            dict_results[training_pattern, i, unit_pattern] = pred
-        model.save("./model_saves/500us" + str(training_pattern) + str(unit_pattern))
-
-#%% save dict results
 
 
-#%% plots
 
-cc = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-for i in range(3): #across model shapes
-    validation_matrix = np.zeros((3,3))
-    fig, axes = plt.subplots(3,1, sharex=True, sharey=True, figsize=(9,4))
-    for j in range(3): # across validation profile
-        for k in range(3): # across prediction profile
-            pred = dict_results[(j,k+1,i)].T
-            true = pin_scaler.inverse_transform(np.expand_dims(y[k+1],-1))
-            snr = signaltonoise(true, pred)
-            validation_matrix[j, k] = snr
-            c = cc[2] if j == k else cc[1]
-            axes[j].plot(t[k+1], pred, c=c)
-        reference = pin_scaler.inverse_transform(np.expand_dims(y[0],-1))
-        axes[j].plot(t[0], reference, c=cc[0], alpha=.9)
-    fig.savefig("./plots/validation profile prediction" + str(i) + ".png", dpi=800)
-    plt.figure()
-    plt.matshow(validation_matrix.T)
-    plt.ylabel("validation profile of model")
-    plt.xlabel("prediction profile")
-    plt.colorbar()
-    plt.savefig("./plots/validation matrix" + str(i) + ".png", dpi=800)
+
+
+

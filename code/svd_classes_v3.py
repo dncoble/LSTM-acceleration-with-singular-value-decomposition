@@ -7,7 +7,7 @@ import tensorflow.keras.backend as backend
 import numpy as np
 from numpy import matmul
 """
-v3: Wont to perform comparison between performance of split and merged kernels.
+v3: Want to perform comparison between performance of split and merged kernels.
 TensorFlow 2.5.0
 """
 """
@@ -28,37 +28,69 @@ class SingularLSTMCell(LSTMCell):
     def build(self, input_shape):
         # default_caching_device = rnn_utils.caching_device(self)
         input_dim = input_shape[-1]
-        self.kernel = self.add_weight(
-            shape=(1,input_dim),
-            name='kernel',
-            initializer=self.kernel_initializer,
-            regularizer=self.kernel_regularizer,
-            constraint=self.kernel_constraint
-            # caching_device=default_caching_device
-        )
-        self.recurrent_kernel = self.add_weight(
-            shape=(1,self.units),
-            name='recurrent_kernel',
-            initializer=self.recurrent_initializer,
-            regularizer=self.recurrent_regularizer,
-            constraint=self.recurrent_constraint
-            # caching_device=default_caching_device
-        )
-        self.w_left = self.add_weight(
-            shape=(input_dim, input_dim),
-            name = "w_left",
-            trainable=False
-        )
+        if(self.merged_kernel):
+            self.kernel = self.add_weight(
+                shape=(1,input_dim),
+                name='kernel',
+                initializer=self.kernel_initializer,
+                regularizer=self.kernel_regularizer,
+                constraint=self.kernel_constraint
+                # caching_device=default_caching_device
+            )
+            self.recurrent_kernel = self.add_weight(
+                shape=(1,self.units),
+                name='recurrent_kernel',
+                initializer=self.recurrent_initializer,
+                regularizer=self.recurrent_regularizer,
+                constraint=self.recurrent_constraint
+                # caching_device=default_caching_device
+            )
+            self.w_left = self.add_weight(
+                shape=(input_dim, input_dim),
+                name = "w_left",
+                trainable=False
+            )
+        else:
+            self.kernel = self.add_weight(
+                shape=(1,input_dim*4),
+                name='kernel',
+                initializer=self.kernel_initializer,
+                regularizer=self.kernel_regularizer,
+                constraint=self.kernel_constraint
+                # caching_device=default_caching_device
+            )
+            self.recurrent_kernel = self.add_weight(
+                shape=(1,self.units * 4),
+                name='recurrent_kernel',
+                initializer=self.recurrent_initializer,
+                regularizer=self.recurrent_regularizer,
+                constraint=self.recurrent_constraint
+                # caching_device=default_caching_device
+            )
+            self.w_left = self.add_weight(
+                shape=(input_dim, input_dim*4),
+                name = "w_left",
+                trainable=False
+            )
+        
         self.w_right = self.add_weight(
-            shape=(input_dim, self.units*4),
+            shape=(input_dim, self.units*4), #same shape in split and merged
             name = "w_right",
             trainable=False
         )
-        self.u_left = self.add_weight(
-            shape=(self.units, self.units),
-            name = "u_left",
-            trainable=False
-        )
+        if(self.merged_kernel):
+            self.u_left = self.add_weight(
+                shape=(self.units, self.units),
+                name = "u_left",
+                trainable=False
+            )
+        else:
+            self.u_left = self.add_weight(
+                shape=(self.units, self.units*4),
+                name = "u_left",
+                trainable=False
+            )
+        
         self.u_right = self.add_weight(
             shape=(self.units, self.units*4),
             name = "u_right",
@@ -201,6 +233,7 @@ class ReducedLSTMCell(LSTMCell):
     def __init__(self, units, w=None, u=None, b=None, merged_kernel=True, **kwargs):
         super(ReducedLSTMCell, self).__init__(units, **kwargs)
         self.w = w; self.u = u; self.b = b
+        self.merged_kernel = merged_kernel
     
     def build(self, input_shape):
         input_dim = input_shape[-1]
@@ -259,7 +292,7 @@ class ReducedLSTMCell(LSTMCell):
                     trainable=False
                 ))
                 self.u_right.append(self.add_weight(
-                    shape=(rank_u, self.units*4 - rank_u),
+                    shape=(rank_u, self.units - rank_u),
                     name="u_right_"+gate,
                     trainable=False
                 ))
@@ -394,7 +427,7 @@ class SingularLSTM(keras.layers.LSTM):
         return output
     
     def get_prunable_weights(self):
-        return [self.cell.w_sigma, self.cell.u_sigma]
+        return [self.cell.kernel, self.cell.recurrent_kernel]
 
 class PrunableTimeDistributed(keras.layers.TimeDistributed):
     
@@ -423,7 +456,7 @@ class HoyerRegularizer:
 """
 Helper method for make_LSTM_singular_model with merged_kernel = False.
 """
-def make_split_LSTM_singular_model(model, regularizer=False):
+def make_split_LSTM_singular_model(model, hoyer=None):
     smodel = keras.models.Sequential()
     smodel.add(keras.layers.InputLayer(input_shape=[None, 1]))
     for layer in model.layers[:-1]:
@@ -452,7 +485,7 @@ def make_split_LSTM_singular_model(model, regularizer=False):
             unsplit_sigma = sigmas[0]
             unsplit_right = rights[0]
             for left, sigma, right in zip(lefts[1:], sigmas[1:], rights[1:]):
-                unsplit_left = np.append(unsplit_left, left, axis=1) # maybe wrong axis?
+                unsplit_left = np.append(unsplit_left, left, axis=1)
                 unsplit_sigma = np.append(unsplit_sigma, sigma, axis=1)
                 unsplit_right = np.append(unsplit_right, right,axis=1)
             wu.append([unsplit_left, unsplit_sigma, unsplit_right])
@@ -460,18 +493,16 @@ def make_split_LSTM_singular_model(model, regularizer=False):
         # b = np.expand_dims(b, axis=-1).T
         # wu[0] = np.expand_dims(wu[0], 0)
         # wu[1] = np.expand_dims(wu[1], 0)
-        if(regularizer):
-            # kernel_regularizer = keras.regularizers.L1(.0002)
-            # recurrent_regularizer = keras.regularizers.L1(.0002)
-            kernel_regularizer = HoyerRegularizer(.03)
-            recurrent_regularizer = HoyerRegularizer(.03)
+        if(hoyer is not None and hoyer != 0):
+            kernel_regularizer = HoyerRegularizer(hoyer)
+            recurrent_regularizer = HoyerRegularizer(hoyer)
         else:
             kernel_regularizer = None
             recurrent_regularizer = None
         cell = SingularLSTMCell(units, w=wu[0],u=wu[1],b=b, 
                 kernel_regularizer=kernel_regularizer, 
                 recurrent_regularizer=recurrent_regularizer, 
-                merged_kernel=True
+                merged_kernel=False
         )
         
         lstm = SingularLSTM(units, cell=cell, return_sequences=True)
@@ -486,10 +517,12 @@ def make_split_LSTM_singular_model(model, regularizer=False):
     return smodel
 """
 Returns a singular model from the pretrained input model
+hoyer: the coefficient of the Hoyer regularizer. if None or 0 no regularizer
+is applied
 """
-def make_LSTM_singular_model(model, regularizer=False, merged_kernel=True):
+def make_LSTM_singular_model(model, hoyer=None, merged_kernel=True):
     if(not merged_kernel):
-        return make_split_LSTM_singular_model(model, regularizer=regularizer)
+        return make_split_LSTM_singular_model(model, hoyer=hoyer)
     # else model is split kernel
     smodel = keras.models.Sequential()
     smodel.add(keras.layers.InputLayer(input_shape=[None, 1]))
@@ -503,9 +536,9 @@ def make_LSTM_singular_model(model, regularizer=False, merged_kernel=True):
             sigma = np.expand_dims(sigma, axis=0)
             wu.append([left, sigma, right])
 
-        if(regularizer):
-            kernel_regularizer = HoyerRegularizer(.12)
-            recurrent_regularizer = HoyerRegularizer(.12)
+        if(hoyer is not None and hoyer != 0):
+            kernel_regularizer = HoyerRegularizer(hoyer)
+            recurrent_regularizer = HoyerRegularizer(hoyer)
         else:
             kernel_regularizer = None
             recurrent_regularizer = None
@@ -559,10 +592,42 @@ def make_LSTM_reduced_model(model, cutoff=.05, merged_kernel = True):
             rmodel.add(lstm)
     else:
         for layer in model.layers[:-1]:
+            w = []; u = []
             units = layer.units
             weights = layer.get_weights()
             
-        
+            w_l = weights[2]; w_s = weights[0]; w_r = weights[3]
+            u_l = weights[4]; u_s = weights[1]; u_r = weights[5]
+            b = weights[6]
+            
+            w_l = np.split(w_l, 4, axis=1)
+            w_s = np.split(w_s, 4, axis=1)
+            w_r = np.split(w_r, 4, axis=1)
+            u_l = np.split(u_l, 4, axis=1)
+            u_s = np.split(u_s, 4, axis=1)
+            u_r = np.split(u_r, 4, axis=1)
+            
+            for i in range(4):
+                wu = []
+                for mat in [[w_l[i], w_s[i], w_r[i]], [u_l[i], u_s[i], u_r[i]]]:
+                    U = mat[0]; S = mat[1]; V = mat[2]
+                    U = U.T[(S>cutoff)[0]].T
+                    V = V[(S>cutoff)[0]]
+                    S = S[(S>cutoff)]
+                    r = V.shape[0]
+                    V1 = V[:,:r]
+                    V2 = V[:,r:]
+                    B = (U * S) @ V1
+                    C = np.linalg.inv(V1) @ V2
+                    wu.append([B, C])
+                w.append(wu[0]); u.append(wu[1])
+            
+            cell = ReducedLSTMCell(units, w=w, u=u, b=b, merged_kernel=False)
+            lstm = SingularLSTM(units, cell=cell, return_sequences=True)
+            rmodel.add(lstm)
+            
+                
+                
     dense_top = keras.layers.TimeDistributed(keras.layers.Dense(1))
     rmodel.add(dense_top)
     dense_top.set_weights([
