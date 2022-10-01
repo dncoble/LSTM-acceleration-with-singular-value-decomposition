@@ -1,6 +1,3 @@
-import json
-import pickle
-import joblib
 import math
 import numpy as np
 from numpy.random import randint
@@ -8,55 +5,88 @@ import matplotlib.pyplot as plt
 import tensorflow.keras as keras
 import sklearn as sk
 import time
-
+from scipy import signal
 import tensorflow_model_optimization as tfmot
 from tensorflow_model_optimization.python.core.sparsity.keras import prune
 from tensorflow_model_optimization.python.core.sparsity.keras import pruning_callbacks
 from tensorflow_model_optimization.python.core.sparsity.keras import pruning_schedule
 from tensorflow_model_optimization.python.core.sparsity.keras import pruning_wrapper
 
-"""
-SVD acceleration using svd_classes_v3 classes.
+from svd_classes_v3 import make_LSTM_singular_model, PrunableTimeDistributed, make_LSTM_reduced_model
 
-TensorFlow 2.5.0
-TensorFlow Model Optimization 0.6.0 (for compatibility with TF 2.5.0)
+"""
+SVD acceleration using svd_classes_v3 classes. Now using TF 2.10 for built-in
+orthogonal regularizer.
+
+TensorFlow 2.10.0
 """
 #%% load data
-from load_preprocess import preprocess
-# preprocess()
-print("loading data...")
-load_X_train = open("./pickles/X_train", 'rb')
-load_y_train = open("./pickles/y_train", 'rb')
-load_t_train = open("./pickles/t_train", 'rb')
-load_X_test = open("./pickles/X_test", 'rb')
-load_y_test = open("./pickles/y_test", 'rb')
-load_t_test = open("./pickles/t_test", 'rb')
+def preprocess(sampling_period):
+    import json
+    import pickle
+    import numpy as np
+    import sklearn as sk
+    import joblib
+    f = open('data_6_with_FFT.json')
+    data = json.load(f)
+    f.close()
+    
+    acc = np.array(data['acceleration_data'])
+    acc_t = np.array(data['time_acceleration_data'])
+    pin = np.array(data['measured_pin_location'])
+    pin_t = np.array(data['measured_pin_location_tt'])
+    
+    # pin contains some nan values
+    from math import isnan
+    for i in range(len(pin)):
+        if(isnan(pin[i])):
+            pin[i] = pin[i-1]
+    
+    resample_period = sampling_period
+    pin = pin[pin_t > 1.5]
+    pin_t = pin_t[pin_t > 1.5] - 1.5
+    acc = acc[acc_t > 1.5]
+    acc_t = acc_t[acc_t > 1.5] - 1.5
+    num = int((acc_t[-1] - acc_t[0])/resample_period)
+    
+    resample_acc, resample_t = signal.resample(acc, num, acc_t)
+    resample_pin = np.interp(resample_t, pin_t, pin)
+    
+    # scaling data, which means that it must be unscaled to be useful
+    from sklearn import preprocessing
+    acc_scaler = sk.preprocessing.StandardScaler()
+    acc_scaler.fit(resample_acc.reshape(-1, 1))
+    acc = acc_scaler.fit_transform(resample_acc.reshape(-1, 1)).flatten()
+    pin_scaler = sk.preprocessing.StandardScaler()
+    pin_scaler.fit(resample_pin.reshape(-1,1))
+    pin = pin_scaler.fit_transform(resample_pin.reshape(-1,1)).flatten().astype(np.float32)
+    
+    # reshape for multi-input
+    ds = 16
+    X = np.reshape(acc[:acc.size//ds*ds], (acc.size//ds, ds))
+    t = np.reshape(resample_t[:resample_t.size//ds*ds], (resample_t.size//ds, ds)).T[0]
+    y = np.reshape(pin[:pin.size//ds*ds], (pin.size//ds, ds)).T[0]
+    
+    X = np.expand_dims(X, 0)
+    
+    X_train = X[:,t<30.7]
+    y_train = y[t<30.7]
+    t_train = t[t<30.7]
+    
+    X_test = X[:,t>30.7]
+    y_test = y[t>30.7]
+    t_test = t[t>30.7]
+    
+    return (X, X_train, X_test), (y, y_train, y_test), (t, t_test, t_train), pin_scaler, acc_scaler
 
-
-X_train = pickle.load(load_X_train)
-y_train = pickle.load(load_y_train)
-t_train = pickle.load(load_t_train)
-X_test = pickle.load(load_X_test)
-y_test = pickle.load(load_y_test)
-t_test = pickle.load(load_t_test)
-
-pin_scaler = joblib.load('./pickles/pin_scaler')
-acc_scaler = joblib.load('./pickles/pin_scaler')
-
-load_X_train.close()
-load_y_train.close()
-load_t_train.close()
-load_X_test.close()
-load_y_test.close()
-load_t_test.close()
-#%%
-def split_train_random(batch_size, train_len):
-    runs = X_train.shape[0]
+def split_train_random(X_train, y_train, batch_size, train_len):
     run_size = X_train.shape[1]
-    indices = [(randint(1, runs), randint(0, run_size - train_len)) for i in range(batch_size)]
-    X_mini = np.copy(np.array([X_train[index[0],index[1]:index[1]+train_len] for index in indices]))
-    y_mini = np.copy(np.array([y_train[index[0],index[1]+train_len][0] for index in indices]))
+    indices = [randint(0, run_size - train_len) for i in range(batch_size)]
+    X_mini = np.copy(np.array([X_train[0,index:index+train_len] for index in indices]))
+    y_mini = np.copy(np.array([y_train[index+train_len] for index in indices]))
     return X_mini, y_mini
+
+# use the formula SNR= (A_signal/A_noise)_rms^2. returned in dB
 def signaltonoise(signal, noisy_signal, dB=True):
     noise = signal - noisy_signal
     a_sig = math.sqrt(np.mean(np.square(signal)))
@@ -65,27 +95,6 @@ def signaltonoise(signal, noisy_signal, dB=True):
     if(not dB):
         return snr
     return 10*math.log(snr, 10)
-
-from svd_classes_v3 import make_LSTM_singular_model, PrunableTimeDistributed, make_LSTM_reduced_model
-model = keras.models.load_model("./model_saves/pretrained_sequential")
-#%% regularization
-smodel = make_LSTM_singular_model(model, hoyer=.01, merged_kernel=False)
-
-X_mini, y_mini = split_train_random(3200, 100)
-smodel.compile(
-    loss="mse",
-    optimizer="adam"
-)
-smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=10)
-s = []
-for layer in smodel.layers[:-1]: 
-    s.append(layer.cell.kernel.numpy())
-    s.append(layer.cell.recurrent_kernel.numpy())
-#%% pruning
-smodel = make_LSTM_singular_model(model, merged_kernel=False)
-
-prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
-
 def apply_pruning_to_LSTM(layer):
     # pruning_schedule = tfmot.sparsity.keras.ConstantSparsity(
     #     target_sparsity=.7, begin_step=0)
@@ -94,17 +103,38 @@ def apply_pruning_to_LSTM(layer):
     if not isinstance(layer, keras.layers.TimeDistributed):
         return tfmot.sparsity.keras.prune_low_magnitude(layer,pruning_schedule)
     return layer
+#%% 
+(X, X_train, X_test), (y, y_train, y_test), \
+    (t, t_test, t_train), pin_scaler, acc_scaler = preprocess(500/16*10**-6)
+model = keras.models.load_model("./model_saves/pretrained_sequential")
 
-smodel = keras.models.clone_model(smodel, clone_function=apply_pruning_to_LSTM)
+smodel = make_LSTM_singular_model(model, hoyer=.01, orthogonal=0.1, merged_kernel=False)
+#%% regularization
+X_mini, y_mini = split_train_random(X_train, y_train, 20000, 200)
 smodel.compile(
     loss="mse",
     optimizer="adam"
 )
+smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X,y.reshape(1, -1, 1)), epochs=10)
+s = []
+for layer in smodel.layers[:-1]: 
+    s.append(layer.cell.kernel.numpy())
+    s.append(layer.cell.recurrent_kernel.numpy())
+#%% pruning
+# smodel = make_LSTM_singular_model(model, merged_kernel=False)
 
-X_mini, y_mini = split_train_random(6400, 100)
+# prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
 
-smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=25, 
-           callbacks=[pruning_callbacks.UpdatePruningStep()])
+# smodel = keras.models.clone_model(smodel, clone_function=apply_pruning_to_LSTM)
+# smodel.compile(
+#     loss="mse",
+#     optimizer="adam"
+# )
+
+# X_mini, y_mini = split_train_random(6400, 100)
+
+# smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=25, 
+#            callbacks=[pruning_callbacks.UpdatePruningStep()])
 #%% created reduced model
 rmodel = make_LSTM_reduced_model(smodel, merged_kernel=False, cutoff=.05)
 

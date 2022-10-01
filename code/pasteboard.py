@@ -87,5 +87,14 @@ def make_another_model(model):
     smodel.add(dense_top)
     
     
-    
+import tensorflow as tf
+import tensorflow.keras as keras
+import numpy
+
+model = keras.models.load_model("./model_saves/400us3cells15units")
+
+
+
+
+
     

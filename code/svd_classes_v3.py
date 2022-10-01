@@ -8,21 +8,24 @@ import numpy as np
 from numpy import matmul
 """
 v3: Want to perform comparison between performance of split and merged kernels.
-TensorFlow 2.5.0
 """
 """
 The model is retrained with SingularLSTMCells with Hoyer regularizers to 
-induce sparsity in the kernel and recurrent kernel (singular value vectors)
+induce sparsity in the kernel and recurrent kernel (singular value vectors).
+U, V matrices can be set to train with orthogonal regularizer
 """
 class SingularLSTMCell(LSTMCell):
     
     def __init__(self, units, w=None,u=None, b=None, merged_kernel=True,
-                 kernel_regularizer=None, recurrent_regularizer=None, **kwargs):
+                 train_uv=False, kernel_regularizer=None, 
+                 recurrent_regularizer=None, uv_regularizer=None, **kwargs):
         super(SingularLSTMCell, self).__init__(units, **kwargs)
         self.w = w; self.u = u; self.b = b
+        self.train_uv = train_uv
         self.kernel_regularizer=kernel_regularizer
         self.recurrent_regularizer=recurrent_regularizer
         self.merged_kernel = merged_kernel
+        self.uv_regularizer=uv_regularizer
     
     
     def build(self, input_shape):
@@ -48,7 +51,8 @@ class SingularLSTMCell(LSTMCell):
             self.w_left = self.add_weight(
                 shape=(input_dim, input_dim),
                 name = "w_left",
-                trainable=False
+                regularzier=self.uv_regularizer,
+                trainable=self.train_uv
             )
         else:
             self.kernel = self.add_weight(
@@ -70,36 +74,41 @@ class SingularLSTMCell(LSTMCell):
             self.w_left = self.add_weight(
                 shape=(input_dim, input_dim*4),
                 name = "w_left",
-                trainable=False
+                regularizer=self.uv_regularizer,
+                trainable=self.train_uv
             )
         
         self.w_right = self.add_weight(
             shape=(input_dim, self.units*4), #same shape in split and merged
             name = "w_right",
-            trainable=False
+            regularizer=self.uv_regularizer,
+            trainable=self.train_uv
         )
         if(self.merged_kernel):
             self.u_left = self.add_weight(
                 shape=(self.units, self.units),
                 name = "u_left",
-                trainable=False
+                regularizer=self.uv_regularizer,
+                trainable=self.train_uv
             )
         else:
             self.u_left = self.add_weight(
                 shape=(self.units, self.units*4),
                 name = "u_left",
-                trainable=False
+                regularizer=self.uv_regularizer,
+                trainable=self.train_uv
             )
         
         self.u_right = self.add_weight(
             shape=(self.units, self.units*4),
             name = "u_right",
-            trainable=False
+            regularizer=self.uv_regularizer,
+            trainable=self.train_uv
         )
         self.bias = self.add_weight(
             shape=(self.units*4,),
             name="bias",
-            trainable=False
+            trainable=self.train_uv # maybe should make another option for training b
         )
         weights = (self.w[1], self.u[1], self.w[0], self.w[2], self.u[0], self.u[2],self.b)
         self.set_weights(weights)
@@ -406,7 +415,8 @@ class SingularLSTM(keras.layers.LSTM):
             unroll=self.unroll,
             input_length=timesteps,
             time_major=self.time_major,
-            zero_output_for_mask=self.zero_output_for_mask)
+            zero_output_for_mask=self.zero_output_for_mask
+        )
         # runtime = gru_lstm_utils.runtime(gru_lstm_utils.RUNTIME_UNKNOWN)
         if self.stateful:
             updates = [
@@ -456,9 +466,9 @@ class HoyerRegularizer:
 """
 Helper method for make_LSTM_singular_model with merged_kernel = False.
 """
-def make_split_LSTM_singular_model(model, hoyer=None):
+def make_split_LSTM_singular_model(model, hoyer=None, orthogonal=None):
     smodel = keras.models.Sequential()
-    smodel.add(keras.layers.InputLayer(input_shape=[None, 1]))
+    smodel.add(keras.layers.InputLayer(input_shape=[None, model.input_shape[-1]]))
     for layer in model.layers[:-1]:
         w, u, b = layer.get_weights()
         
@@ -499,10 +509,18 @@ def make_split_LSTM_singular_model(model, hoyer=None):
         else:
             kernel_regularizer = None
             recurrent_regularizer = None
+        if(orthogonal is not None and orthogonal != 0):
+            uv_regularizer=keras.regularizers.OrthogonalRegularizer(factor=orthogonal, mode='rows')
+            train_uv = True
+        else:
+            uv_regularizer=None
+            train_uv = False
         cell = SingularLSTMCell(units, w=wu[0],u=wu[1],b=b, 
                 kernel_regularizer=kernel_regularizer, 
                 recurrent_regularizer=recurrent_regularizer, 
-                merged_kernel=False
+                train_uv=train_uv,
+                uv_regularizer=uv_regularizer,
+                merged_kernel=False,
         )
         
         lstm = SingularLSTM(units, cell=cell, return_sequences=True)
@@ -519,13 +537,15 @@ def make_split_LSTM_singular_model(model, hoyer=None):
 Returns a singular model from the pretrained input model
 hoyer: the coefficient of the Hoyer regularizer. if None or 0 no regularizer
 is applied
+orthogonal: the coefficient of the orthogonal regularizer. if None or 0
+no regularizer is applied and U, V matrices are not trainable
 """
-def make_LSTM_singular_model(model, hoyer=None, merged_kernel=True):
+def make_LSTM_singular_model(model, hoyer=None, orthogonal=None, merged_kernel=True):
     if(not merged_kernel):
         return make_split_LSTM_singular_model(model, hoyer=hoyer)
     # else model is split kernel
     smodel = keras.models.Sequential()
-    smodel.add(keras.layers.InputLayer(input_shape=[None, 1]))
+    smodel.add(keras.layers.InputLayer(input_shape=[None, model.input_shape[-1]]))
     for layer in model.layers[:-1]:
         w, u, b = layer.get_weights()
         units = layer.units
@@ -542,9 +562,17 @@ def make_LSTM_singular_model(model, hoyer=None, merged_kernel=True):
         else:
             kernel_regularizer = None
             recurrent_regularizer = None
+        if(orthogonal is not None and orthogonal != 0):
+            uv_regularizer=keras.regularizers.OrthogonalRegularizer(factor=orthogonal, mode='rows')
+            train_uv = True
+        else:
+            uv_regularizer=None
+            train_uv = False
         cell = SingularLSTMCell(units, w=wu[0],u=wu[1],b=b, 
                 kernel_regularizer=kernel_regularizer, 
-                recurrent_regularizer=recurrent_regularizer
+                recurrent_regularizer=recurrent_regularizer,
+                train_uv=train_uv,
+                uv_regularizer=uv_regularizer,
         )
         
         lstm = SingularLSTM(units, cell=cell, return_sequences=True)
