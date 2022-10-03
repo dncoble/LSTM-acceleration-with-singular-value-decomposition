@@ -87,11 +87,14 @@ def split_train_random(X_train, y_train, batch_size, train_len):
     return X_mini, y_mini
 
 # use the formula SNR= (A_signal/A_noise)_rms^2. returned in dB
-def signaltonoise(signal, noisy_signal, dB=True):
+def signaltonoise(signal, noisy_signal, invert=False, dB=True):
     noise = signal - noisy_signal
     a_sig = math.sqrt(np.mean(np.square(signal)))
     a_noise = math.sqrt(np.mean(np.square(noise)))
-    snr = (a_sig/a_noise)**2
+    if(not invert):
+        snr = (a_sig/a_noise)**2
+    else:
+        snr = (a_noise/a_sig)**2
     if(not dB):
         return snr
     return 10*math.log(snr, 10)
@@ -106,23 +109,28 @@ def apply_pruning_to_LSTM(layer):
 #%% 
 (X, X_train, X_test), (y, y_train, y_test), \
     (t, t_test, t_train), pin_scaler, acc_scaler = preprocess(500/16*10**-6)
+
+X_mini, y_mini = split_train_random(X_train, y_train, 20000, 200)
+
 model = keras.models.load_model("./model_saves/pretrained_sequential")
 
-smodel = make_LSTM_singular_model(model, hoyer=.01, orthogonal=0.1, merged_kernel=False)
+smodel = make_LSTM_singular_model(model, hoyer=0.01, orthogonal=None, merged_kernel=False)
 #%% regularization
-X_mini, y_mini = split_train_random(X_train, y_train, 20000, 200)
 smodel.compile(
     loss="mse",
     optimizer="adam"
 )
-smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X,y.reshape(1, -1, 1)), epochs=10)
+smodel.fit(
+    X_mini, y_mini,
+    batch_size=32,
+    validation_data=(X,y.reshape(1, -1, 1)),
+    epochs=10
+)
 s = []
 for layer in smodel.layers[:-1]: 
     s.append(layer.cell.kernel.numpy())
     s.append(layer.cell.recurrent_kernel.numpy())
 #%% pruning
-# smodel = make_LSTM_singular_model(model, merged_kernel=False)
-
 # prune_low_magnitude = tfmot.sparsity.keras.prune_low_magnitude
 
 # smodel = keras.models.clone_model(smodel, clone_function=apply_pruning_to_LSTM)
@@ -131,29 +139,20 @@ for layer in smodel.layers[:-1]:
 #     optimizer="adam"
 # )
 
-# X_mini, y_mini = split_train_random(6400, 100)
-
 # smodel.fit(X_mini, y_mini, batch_size=32, validation_data=(X_test,y_test), epochs=25, 
-#            callbacks=[pruning_callbacks.UpdatePruningStep()])
+#             callbacks=[pruning_callbacks.UpdatePruningStep()])
 #%% created reduced model
 rmodel = make_LSTM_reduced_model(smodel, merged_kernel=False, cutoff=.05)
 
 start_time = time.perf_counter()
-fy = model.predict(X_test)
+fy = model.predict(X)
 print("full model timing: " + str(time.perf_counter() - start_time) + " sec")
 start_time = time.perf_counter()
-ry = rmodel.predict(X_test)
+ry = rmodel.predict(X)
 print("reduced model timing: " + str(time.perf_counter() - start_time) + " sec")
-plt.figure(figsize=(7,3.3))
-plt.title("LSTM prediction of pin location")
-plt.plot(t_test[0], ry[0], label = "predicted pin location")
-plt.plot(t_test[0], y_test[0], label = "actual pin location",alpha=.8)
-plt.xlabel("time [s]")
-plt.ylabel("pin location [m]")
-# plt.ylim((0.045, .23))
-plt.legend(loc=1)
-plt.tight_layout()
-
+# start_time = time.perf_counter()
+# sy = smodel.predict(X)
+# print("singular model timing: " + str(time.perf_counter() - start_time) + " sec")
 #%% analysis\
 from sklearn.metrics import mean_squared_error
 from math import sqrt
@@ -170,26 +169,39 @@ print("%d weights in full matrix"%full_weights)
 print("%d weights in reduced matrix"%reduced_weights)
 print("%f percent reduction in weights"%(100 - reduced_weights/full_weights*100))
 
-ry_scaled = pin_scaler.inverse_transform(ry.squeeze())
-my_scaled = pin_scaler.inverse_transform(fy.squeeze())
-y_test_scaled = pin_scaler.inverse_transform(y_test.squeeze())
+ry_scaled = pin_scaler.inverse_transform(ry.reshape(-1, 1))
+my_scaled = pin_scaler.inverse_transform(fy.reshape(-1, 1))
+y_scaled = pin_scaler.inverse_transform(y.reshape(-1, 1))
 
-rmse = sum([mean_squared_error(y_t, y_p) for y_t, y_p in zip(y_test_scaled, ry_scaled)])/y_test.shape[0]
-rrmse = sqrt(sum([mean_squared_error(y_t, y_p, squared=False)**2 for y_t, y_p in zip(y_test_scaled, ry_scaled)])/y_test.shape[0])
-mmse = sum([mean_squared_error(y_t, y_p) for y_t, y_p in zip(y_test_scaled, my_scaled)])/y_test.shape[0]
-mrmse = sqrt(sum([mean_squared_error(y_t, y_p, squared=False)**2 for y_t, y_p in zip(y_test_scaled, my_scaled)])/y_test.shape[0])
+plt.figure(figsize=(7,3.3))
+plt.title("LSTM prediction of pin location")
+plt.plot(t, y_scaled.flatten(), label = "reference",alpha=.8)
+plt.plot(t, ry_scaled.flatten(), label = "reduced model")
+plt.plot(t, my_scaled.flatten(), label = "full model")
+plt.xlabel("time [s]")
+plt.ylabel("pin location [m]")
+# plt.ylim((0.045, .23))
+plt.legend(loc=1)
+plt.tight_layout()
+
+rmse = sum([mean_squared_error(y_t, y_p) for y_t, y_p in zip(y_scaled, ry_scaled)])/y_test.shape[0]
+rrmse = sqrt(sum([mean_squared_error(y_t, y_p, squared=False)**2 for y_t, y_p in zip(y_scaled, ry_scaled)])/y_test.shape[0])
+mmse = sum([mean_squared_error(y_t, y_p) for y_t, y_p in zip(y_scaled, my_scaled)])/y_test.shape[0]
+mrmse = sqrt(sum([mean_squared_error(y_t, y_p, squared=False)**2 for y_t, y_p in zip(y_scaled, my_scaled)])/y_test.shape[0])
 
 print("%f m RMSE of reduced model"%(rrmse))
 print("%f m RMSE of full model"%(mrmse))
 print("%f percent increase in RMSE"%(rrmse/mrmse*100-100))
 
 
-rsnr = signaltonoise(y_test_scaled, ry_scaled)
-msnr = signaltonoise(y_test_scaled, my_scaled)
+rsnr = signaltonoise(y_scaled, ry_scaled)
+msnr = signaltonoise(y_scaled, my_scaled)
+nsnr = signaltonoise(my_scaled, ry_scaled, invert=True)
 
 print("%f dB SNR of reduced model"%rsnr)
 print("%f dB SNR of full model"%msnr)
 print("%f dB reduction of model SNR"%(msnr-rsnr))
+print("%f dB noise from full to reduced model"%(nsnr))
 
 # start_time = time.perf_counter()
 # sy = smodel.predict(X_test)

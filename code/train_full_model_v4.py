@@ -124,10 +124,6 @@ model.fit(
     epochs=30,
     # validation_data=(X, y.reshape(1, -1, 1)),
 )
-
-model.save("./model_saves/pretrained_sequential")
-
-
 #%% analysis
 model = keras.models.load_model("./model_saves/pretrained_sequential")
 model2 = keras.Sequential([
@@ -159,3 +155,5 @@ plt.xlabel("time (s)")
 plt.ylabel("displacement (m)")
 plt.tight_layout()
 plt.legend()
+
+model.save("./model_saves/pretrained_sequential")

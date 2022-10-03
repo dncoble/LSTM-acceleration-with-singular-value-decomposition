@@ -466,10 +466,11 @@ class HoyerRegularizer:
 """
 Helper method for make_LSTM_singular_model with merged_kernel = False.
 """
-def make_split_LSTM_singular_model(model, hoyer=None, orthogonal=None):
+def make_split_LSTM_singular_model(model, hoyer=None, orthogonal=None,
+                                   return_sequences=False):
     smodel = keras.models.Sequential()
     smodel.add(keras.layers.InputLayer(input_shape=[None, model.input_shape[-1]]))
-    for layer in model.layers[:-1]:
+    for i, layer in enumerate(model.layers[:-1]):
         w, u, b = layer.get_weights()
         
         # w = np.expand_dims(w, -1)
@@ -522,11 +523,15 @@ def make_split_LSTM_singular_model(model, hoyer=None, orthogonal=None):
                 uv_regularizer=uv_regularizer,
                 merged_kernel=False,
         )
-        
-        lstm = SingularLSTM(units, cell=cell, return_sequences=True)
+        rs = True
+        if(i == len(model.layers[:-1])-1 and not return_sequences):
+            rs = False
+        lstm = SingularLSTM(units, cell=cell, return_sequences=rs)
         smodel.add(lstm)
     
-    dense_top = keras.layers.TimeDistributed(keras.layers.Dense(1))
+    dense_top = keras.layers.Dense(1)
+    if(return_sequences):    
+        dense_top = keras.layers.TimeDistributed(dense_top)
     smodel.add(dense_top)
     dense_top.set_weights([
             model.layers[-1].weights[0].numpy(),
@@ -540,13 +545,15 @@ is applied
 orthogonal: the coefficient of the orthogonal regularizer. if None or 0
 no regularizer is applied and U, V matrices are not trainable
 """
-def make_LSTM_singular_model(model, hoyer=None, orthogonal=None, merged_kernel=True):
+def make_LSTM_singular_model(model, hoyer=None, orthogonal=None, 
+                             merged_kernel=True, return_sequences=False):
+    print("checkpoint1")
     if(not merged_kernel):
-        return make_split_LSTM_singular_model(model, hoyer=hoyer)
+        return make_split_LSTM_singular_model(model, hoyer=hoyer, return_sequences=return_sequences)
     # else model is split kernel
     smodel = keras.models.Sequential()
     smodel.add(keras.layers.InputLayer(input_shape=[None, model.input_shape[-1]]))
-    for layer in model.layers[:-1]:
+    for i, layer in enumerate(model.layers[:-1]):
         w, u, b = layer.get_weights()
         units = layer.units
         
@@ -574,11 +581,15 @@ def make_LSTM_singular_model(model, hoyer=None, orthogonal=None, merged_kernel=T
                 train_uv=train_uv,
                 uv_regularizer=uv_regularizer,
         )
-        
-        lstm = SingularLSTM(units, cell=cell, return_sequences=True)
+        rs = True
+        if(i == len(model.layers[:-1])-1 and not return_sequences):
+            rs = False
+        lstm = SingularLSTM(units, cell=cell, return_sequences=rs)
         smodel.add(lstm)
     
-    dense_top = keras.layers.TimeDistributed(keras.layers.Dense(1))
+    dense_top = keras.layers.Dense(1)
+    if(return_sequences):    
+        dense_top = keras.layers.TimeDistributed(dense_top)
     smodel.add(dense_top)
     dense_top.set_weights([
             model.layers[-1].weights[0].numpy(),
@@ -592,7 +603,7 @@ the maximum magnitude of singular values to be pruned.
 """
 def make_LSTM_reduced_model(model, cutoff=.05, merged_kernel = True):
     rmodel = keras.models.Sequential()
-    rmodel.add(keras.layers.InputLayer(input_shape=[None, 1]))
+    rmodel.add(keras.layers.InputLayer(input_shape=[None, model.input_shape[-1]]))
     if(merged_kernel):
         for layer in model.layers[:-1]:
             units = layer.units
